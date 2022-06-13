@@ -8,7 +8,7 @@ from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper
 
 from .constants import PROPS
-from .functions import get_children, get_armatures
+from .functions import get_children, get_armatures, add_material
 
 class AD_OT_Load_Animation(Operator, ImportHelper):
 
@@ -44,7 +44,7 @@ class AD_OT_Create_Target(Operator):
             self.report({"ERROR"}, "Need at least 1 animation to create target")
             return {"CANCELLED"}
 
-        if number_of_armatures > 4:
+        if number_of_armatures > 5:
             self.report({"ERROR"}, "Currently only 4 animations are supported")
             return {"CANCELLED"}
 
@@ -127,17 +127,28 @@ class AD_OT_Calculate_Average(Operator):
             if not armature.name in [context.scene.source_armature.name, "Target Armature"]:
                 armatures_list_filtered.append(armature)
 
-        for armature in armatures_list_filtered:
-            
-            # set target armature to active
+        for i, armature in enumerate(armatures_list_filtered):
+
+            # deselect all objects
             bpy.context.active_object.select_set(False)
+
+            # select target armature
             target_armature = bpy.data.objects['Target Armature']
             target_armature.select_set(True)
             bpy.context.view_layer.objects.active = target_armature
-            print(f"active object: {bpy.context.view_layer.objects.active}, source armature: {armature}")
+
+            # select other armature
+            armature.select_set(True)
 
             if target_armature.mode == "OBJECT":
                 bpy.ops.object.posemode_toggle()
+
+            print("======================================")
+            print(f"select object {bpy.context.selected_objects}")
+            print(f"active object: {bpy.context.view_layer.objects.active.name}")
+            print(f"armature mode: {armature.mode}")
+            print(f"target armature mode: {target_armature.mode}")
+            print("======================================")
 
             for bone_source, bone_target in zip(armature.pose.bones, target_armature.pose.bones):
                 
@@ -150,38 +161,23 @@ class AD_OT_Calculate_Average(Operator):
                 # add copy rotation constraint
                 target_armature.data.bones.active = bone_target.bone
                 bpy.ops.pose.constraint_add(type='COPY_ROTATION')
-                target_armature.pose.bones[bone_target.name].constraints["Copy Rotation"].target = armature
-                target_armature.pose.bones[bone_target.name].constraints["Copy Rotation"].subtarget = bone_source.name
-                target_armature.pose.bones[bone_target.name].constraints["Copy Rotation"].influence = 0.33
 
-        if context.scene.add_material:
-            
-            # select target armature mesh 
-            bpy.context.active_object.select_set(False)
-            target_armature_mesh = get_children(self, context, bpy.data.objects['Target Armature'])[0]
-            target_armature_mesh.select_set(True)
-            bpy.context.view_layer.objects.active = target_armature_mesh
+                # select name of copy rotation, if there is already one we need to select the new one
+                if i > 0:
+                    copy_rotation_name = f"Copy Rotation.{str(i).zfill(3)}"
+                else:
+                    copy_rotation_name = "Copy Rotation"
 
-            # create new material
-            new_mat = bpy.data.materials.new(name="Average_Dancer_Material")
-            new_mat.use_nodes = True
-            nodes = new_mat.node_tree.nodes
+                target_armature.pose.bones[bone_target.name].constraints[copy_rotation_name].target = armature
+                target_armature.pose.bones[bone_target.name].constraints[copy_rotation_name].subtarget = bone_source.name
+                target_armature.pose.bones[bone_target.name].constraints[copy_rotation_name].influence = 1/(len(armatures_list_filtered) + 1)
 
-            principled_bsdf = nodes.get("Principled BSDF")
+            # go back to object mode and deselect armature
+            if target_armature.mode == "POSE":
+                bpy.ops.object.posemode_toggle()
+            armature.select_set(False)
 
-            print(context.scene.material_color)
-            principled_bsdf.inputs[0].default_value = color # color
-            principled_bsdf.inputs[19].default_value = color # color
-            principled_bsdf.inputs[20].default_value = 1.5 # strength
-
-            # set render engine to eevee and turn on settings for aesthetics
-            bpy.context.space_data.shading.type = 'MATERIAL'
-            bpy.context.scene.render.engine = 'BLENDER_EEVEE'
-            bpy.context.scene.eevee.use_bloom = True
-            bpy.context.scene.eevee.use_ssr = True
-
-            # set new material to mesh
-            target_armature_mesh.data.materials.append(new_mat)
+        add_material(self, context)
 
         return { "FINISHED" }
 
